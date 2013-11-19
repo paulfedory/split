@@ -14,7 +14,7 @@ module Split
       begin
       experiment_name_with_version, goals = normalize_experiment(metric_descriptor)
       experiment_name = experiment_name_with_version.to_s.split(':')[0]
-      experiment = Split::Experiment.new(experiment_name, :alternatives => [control].compact + alternatives, :goals => goals)
+      experiment = Split::Experiment.new(experiment_name, :alternatives => [control].compact + alternatives, :goals => goals, :checkpoints => [])
       control ||= experiment.control && experiment.control.name
 
         ret = if Split.configuration.enabled
@@ -72,7 +72,6 @@ module Split
       end
     end
 
-
     def finished(metric_descriptor, options = {:reset => true})
       return if exclude_visitor? || Split.configuration.disabled?
       metric_descriptor, goals = normalize_experiment(metric_descriptor)
@@ -81,6 +80,34 @@ module Split
       if experiments.any?
         experiments.each do |experiment|
           finish_experiment(experiment, options.merge(:goals => goals))
+        end
+      end
+    rescue => e
+      raise unless Split.configuration.db_failover
+      Split.configuration.db_failover_on_db_error.call(e)
+    end
+
+    def check_experiment(experiment, options = {})
+      return true unless experiment.winner.nil?
+      if ab_user[experiment.checked_key].include?(options[:checkpoints])
+        return true
+      else
+        alternative_name = ab_user[experiment.key]
+        trial = Trial.new(:experiment => experiment, :alternative => alternative_name, :checkpoints => options[:checkpoints])
+        trial.check!
+
+        (ab_user[experiment.checked_key] ||= []) << options[:checkpoints]
+      end
+    end
+
+    def check(metric_descriptor, options = {})
+      return if exclude_visitor? || Split.configuration.disabled?
+      metric_descriptor, checkpoints = normalize_experiment(metric_descriptor)
+      experiments = Metric.possible_experiments(metric_descriptor)
+
+      if experiments.any?
+        experiments.each do |experiment|
+          check_experiment(experiment, options.merge(:checkpoints => checkpoints))
         end
       end
     rescue => e

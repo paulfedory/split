@@ -4,6 +4,7 @@ module Split
     attr_writer :algorithm
     attr_accessor :resettable
     attr_accessor :goals
+    attr_accessor :checkpoints
     attr_accessor :alternatives
 
     def initialize(name, options = {})
@@ -26,6 +27,7 @@ module Split
         if exp_config
           alts = load_alternatives_from_configuration
           options[:goals] = load_goals_from_configuration
+          options[:checkpoints] = load_checkpoints_from_configuration
           options[:resettable] = exp_config[:resettable]
           options[:algorithm] = exp_config[:algorithm]
         end
@@ -33,6 +35,7 @@ module Split
 
       self.alternatives = alts
       self.goals = options[:goals]
+      self.checkpoints = options[:checkpoints]
       self.algorithm = options[:algorithm]
       self.resettable = options[:resettable]
     end
@@ -60,7 +63,7 @@ module Split
       experiment_name_with_version, goals = normalize_experiment(label)
       name = experiment_name_with_version.to_s.split(':')[0]
 
-      exp = self.new name, :alternatives => alternatives, :goals => goals
+      exp = self.new name, :alternatives => alternatives, :goals => goals, :checkpoints => []
       exp.save
       exp
     end
@@ -73,17 +76,21 @@ module Split
         start unless Split.configuration.start_manually
         @alternatives.reverse.each {|a| Split.redis.lpush(name, a.name)}
         @goals.reverse.each {|a| Split.redis.lpush(goals_key, a)} unless @goals.nil?
+        @checkpoints.reverse.each {|a| Split.redis.lpush(checkpoints_key, a)} unless @checkpoints.nil?
       else
 
         existing_alternatives = load_alternatives_from_redis
         existing_goals = load_goals_from_redis
-        unless existing_alternatives == @alternatives.map(&:name) && existing_goals == @goals
+        existing_checkpoints = load_checkpoints_from_redis
+        unless existing_alternatives == @alternatives.map(&:name) && existing_goals == @goals && existing_checkpoints == @checkpoints
           reset
           @alternatives.each(&:delete)
           delete_goals
+          delete_checkpoints
           Split.redis.del(@name)
           @alternatives.reverse.each {|a| Split.redis.lpush(name, a.name)}
           @goals.reverse.each {|a| Split.redis.lpush(goals_key, a)} unless @goals.nil?
+          @checkpoints.reverse.each {|a| Split.redis.lpush(checkpoints_key, a)} unless @checkpoints.nil?
         end
       end
 
@@ -208,8 +215,16 @@ module Split
       "#{name}:goals"
     end
 
+    def checkpoints_key
+      "#{name}:checkpoints"
+    end
+
     def finished_key
       "#{key}:finished"
+    end
+
+    def checked_key
+      "#{key}:checked"
     end
 
     def resettable?
@@ -229,6 +244,7 @@ module Split
       Split.redis.srem(:experiments, name)
       Split.redis.del(name)
       delete_goals
+      delete_checkpoints
       Split.configuration.on_experiment_delete.call(self)
       increment_version
     end
@@ -237,12 +253,17 @@ module Split
       Split.redis.del(goals_key)
     end
 
+    def delete_checkpoints
+      Split.redis.del(checkpoints_key)
+    end
+
     def load_from_redis
       exp_config = Split.redis.hgetall(experiment_config_key)
       self.resettable = exp_config['resettable']
       self.algorithm = exp_config['algorithm']
       self.alternatives = load_alternatives_from_redis
       self.goals = load_goals_from_redis
+      self.checkpoints = load_checkpoints_from_redis
     end
 
     protected
@@ -273,6 +294,19 @@ module Split
 
     def load_goals_from_redis
       Split.redis.lrange(goals_key, 0, -1)
+    end
+
+    def load_checkpoints_from_configuration
+      checkpoints = Split.configuration.experiment_for(@name)[:checkpoints]
+      if checkpoints.nil?
+        checkpoints = []
+      else
+        checkpoints.flatten
+      end
+    end
+
+    def load_checkpoints_from_redis
+      Split.redis.lrange(checkpoints_key, 0, -1)
     end
 
     def load_alternatives_from_configuration

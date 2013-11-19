@@ -361,4 +361,26 @@ describe Split::Experiment do
     end
   end
 
+  describe "specifying checkpoints" do
+    let(:experiment) {
+      Split::Experiment.new('link_color', :alternatives => ['blue', 'red'], :checkpoints => ['basket', 'confirmation'])
+    }
+
+    context "saving experiment" do
+      before { experiment.save }
+
+      it "can find existing experiment" do
+        Split::Experiment.find("link_color").name.should eql("link_color")
+      end
+
+      it "should save checkpoints" do
+        Split::Experiment.find("link_color").checkpoints.should == ['basket', 'confirmation']
+      end
+    end
+
+    it "should have checkpoints" do
+      experiment.checkpoints.should eql(['basket', 'confirmation'])
+    end
+  end
+
 end

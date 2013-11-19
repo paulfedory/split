@@ -9,6 +9,7 @@ describe Split::Trial do
     trial.experiment.should == experiment
     trial.alternative.should == alternative
     trial.goals.should == []
+    trial.checkpoints.should == []
   end
 
   describe "alternative" do
